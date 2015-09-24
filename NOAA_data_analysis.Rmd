@@ -1,0 +1,121 @@
+# Analysis of NOAA Database to Determine Impact of Weather on Population Health and Economy
+
+## Synopsis
+The aim of this report is to determine which severe weather events are the most harmful with respect to population health and the have the greatest economic consequences. The database used for this analysis is the U.S. National Oceanic and Atmospheric Administration’s (NOAA) storm database. This database contains, among other things. data regarding different severe weather events and resulting numbers for human casualties, injuries, and property and crop damage. Analysis was performed using data from across the U.S., from the years 1990 - 2011. From analysis of the data, it was determined that excessive heat and tornadoe weather events caused the most fatalities, and tornadoes caused the most injuries. Also, it was determined that the weather event that caused the most property damage is flood and the weather event that caused the most crop damage was tornado.
+
+## Data Processing
+The complete raw NOAA database is read in to a dataframe. 
+
+```{r message = FALSE}
+# load in libraries needed for analysis
+library(dplyr) 
+library(ggplot2)
+library(lubridate)
+```
+```{r cache=TRUE}
+# read in raw data
+dataNOAAraw <- read.csv("repdata-data-StormData.csv.bz2", header = TRUE) 
+str(dataNOAAraw)
+```
+
+As can be seen from the structure, the database has 902297 observations with 37 variables. It is of interest to reduce the size of the dataframe by filtering out unnecessary variables and dates.
+
+The first step is to determine the number of storm event observations for each year. It is likely that due to lack of good records and record keeping, there is not as much storm data in early years. The intention is to remove years that contribute little to the data.
+
+```{r}
+# extract the year from the date column and add column to database
+dataNOAAraw$YEAR <- year(as.Date(dataNOAAraw$BGN_DATE, "%m/%d/%Y %H:%M:%S"))
+
+# histogram to sure frequency of events by year
+bins <- seq(min(dataNOAAraw$YEAR), max(dataNOAAraw$YEAR)+1, 1)
+hist(dataNOAAraw$YEAR, breaks = bins, xlab = "Year", ylab = "Number of Storm Events",
+     main ="Total Number of Storm Events for Each Year \nAcross the US", col = "azure2")
+
+```
+
+As shown in the histogram, it appears the majority of the data collected occurs after the year 1990. Therefore, only the rows with data for years greater than 1990 are retained. 
+
+```{r}
+dataNOAA <- dataNOAAraw %>% filter(YEAR >= 1990)
+```
+
+Additionally, from the dataframe structure it can be seen that property damage and crop damage are both represented by two variables each. PROPDMGEXP and CROPDMGEXP are populated with the magnitude exponents by which to multiply the values in PROPDMG and CROPDMG respectively in order to obtain damage dollar values. For example, a PROPDMGEXP value of "2" corresponds to a 10^2 multiplier, and a value of "B" means the dollars are in "billions" and corresponds to 10^9 multiplier. Investigation of the levels for PROPDMGEXP and CROPDMGEXP show that there are some nonsense values, specifically {"", "?", "-", "+"}.
+
+```{r}
+levels(dataNOAA$PROPDMGEXP)
+levels(dataNOAA$CROPDMGEXP)
+```
+
+It will be assumed that these nonsense values are "0". The PROPDMGEXP and CROPDMGEXP variables are converted to all number values, which are then appropriately multiplied with the PROPDMG and CROPDMG variables respectively resulting in a column of full dollar values for the different kinds of damage.
+
+```{r cache=TRUE}
+# Clean up PROPDMGEXP variable
+dataNOAA$PROPDMGEXP <- gsub("^$|\\-|\\?|\\+", "0", dataNOAA$PROPDMGEXP)
+dataNOAA$PROPDMGEXP <- gsub("[Bb]", "9", dataNOAA$PROPDMGEXP)
+dataNOAA$PROPDMGEXP <- gsub("[Mm]", "6", dataNOAA$PROPDMGEXP)
+dataNOAA$PROPDMGEXP <- gsub("[Kk]", "3", dataNOAA$PROPDMGEXP)
+dataNOAA$PROPDMGEXP <- gsub("[Hh]", "2", dataNOAA$PROPDMGEXP)
+dataNOAA$PROPDMGEXP <- as.numeric(dataNOAA$PROPDMGEXP)
+
+# Clean up CROPDMGEXP variable
+dataNOAA$CROPDMGEXP <- gsub("^$|\\-|\\?|\\+", "0", dataNOAA$CROPDMGEXP)
+dataNOAA$CROPDMGEXP <- gsub("[Bb]", "9", dataNOAA$CROPDMGEXP)
+dataNOAA$CROPDMGEXP <- gsub("[Mm]", "6", dataNOAA$CROPDMGEXP)
+dataNOAA$CROPDMGEXP <- gsub("[Kk]", "3", dataNOAA$CROPDMGEXP)
+dataNOAA$CROPDMGEXP <- gsub("[Hh]", "2", dataNOAA$CROPDMGEXP)
+dataNOAA$CROPDMGEXP <- as.numeric(dataNOAA$CROPDMGEXP)
+
+# Multiply PROPDMG and CROPDMG to get full dollar values
+dataNOAA <- dataNOAA %>% mutate(PROPDMG = PROPDMG*10^PROPDMGEXP, CROPDMG*10^CROPDMGEXP)
+```
+
+Also, since the intent is to investigate impact on population health and economic consequences, only variables with information pertaining to the analysis are retained. These are decided to be:
+
+* STATE: State in which event occured.
+* EVTYPE: The type of storm/weather event.
+* FATALITIES: The number of fatalities due to the weather event.
+* INJURIES: The number of injuries due to the weather event.
+* PROPDMG: The amount in dollars of property damage.
+* CROPDMG: The amount in dollars of crop damage.
+
+```{r}
+# reduction of dataframe
+dataNOAAreduced <- dataNOAA %>% select(c(STATE,EVTYPE,FATALITIES,INJURIES,CROPDMG,PROPDMG,YEAR))
+str(dataNOAAreduced)
+```
+
+The resulting dataframe "dataNOAAreduced" is the tidy dataset used for the remaining analysis.
+
+## Results
+
+The first question to answer with the data is which weather events were the most harmful with respect to population health. The variables pertaining to population health are measurements of fatalities and injuries. Since we are only interested in the most harmful weather events (and not all weather events), we limit our analysis to the top 15 weather events with highest number of fatalities, and the 15 with the highest number of injuries.
+
+```{r}
+# Group the data by weather event and sum the number of fatalities and take only the top 15
+topFatalities <- dataNOAAreduced %>% group_by(EVTYPE) %>% summarise(TOTAL = sum(FATALITIES)) %>% arrange(desc(TOTAL)) %>% top_n(15)
+
+# Group the data by weather event and sum the number of injuries and take only the top 15
+topInjuries <- dataNOAAreduced %>% group_by(EVTYPE) %>% summarise(TOTAL = sum(INJURIES)) %>% arrange(desc(TOTAL)) %>% top_n(15)
+
+par(mfrow = c(1,2), mar = c(7.1, 5.1, 4.1, 3.1), oma = c(1, 1, 1, 1))
+barplot(topFatalities$TOTAL, names.arg = topFatalities$EVTYPE, las=2, cex.names = 0.75, ylab = "Total Fatalities",  main = "Total Fatalities in all US \n for Top Weather Events \n from Years 1990 - 2011", col = "red")
+barplot(topInjuries$TOTAL, names.arg = topInjuries$EVTYPE, las=2, cex.names = 0.75, ylab = "Total Injuries", main = "Total Injuries in all US \n for Top Weather Events \n from Years 1990 - 2011", col = "yellow")
+```
+
+The weather events that caused the most fatalities across the U.S. from 1990 - 2011 were excessive heat and tornadoes (with excessive heat slightly more). The weather event that caused the most injuries across the U.S from 1990 - 2011 was tornadoes, far more than any other weather event. It can be concluded that tornadoes are the most harmful weather event with respect to population health.
+
+The second question to answer with the data is which weather events caused the greates economic consequences. The variables pertaining to economic consequences are measurements of property damage and crop damage. Since we are only interested in the most harmful weather events (and not all weather events), we limit our analysis to the top 15 weather events with highest dollar values for damage to both property and crops.
+
+```{r}
+# Group the data by weather event and sum the number of fatalities and take only the top 15
+topPropDam <- dataNOAAreduced %>% group_by(EVTYPE) %>% summarise(TOTAL = sum(PROPDMG)) %>% arrange(desc(TOTAL)) %>% top_n(15)
+
+# Group the data by weather event and sum the number of injuries and take only the top 15
+topCropDam <- dataNOAAreduced %>% group_by(EVTYPE) %>% summarise(TOTAL = sum(CROPDMG)) %>% arrange(desc(TOTAL)) %>% top_n(15)
+
+par(mfrow = c(1,2), mar = c(7.1, 4.1, 4.1, 3.1), oma = c(1, 2, 1, 1))
+barplot(topPropDam$TOTAL, names.arg = topPropDam$EVTYPE, las=2, cex.names = 0.75, ylab = "Total Dollar Value of Property Damage",  main = "Total Dollar Value of Property Damage \n in all US for Top Weather Events \n from Years 1990 - 2011", col = "brown", cex.main = 0.8, cex.axis = 0.7, cex.lab = 0.7)
+barplot(topInjuries$TOTAL, names.arg = topInjuries$EVTYPE, las=2, cex.names = 0.75, ylab = "Total Dollar Value of Crop Damage", main = "Total Dollar Value of Crop Damage \n in all US for Top Weather Events \n from Years 1990 - 2011", col = "green", cex.main =0.8, cex.axis = 0.7, cex.lab = 0.7)
+```
+
+The weather event that caused the most property damage across the U.S. from 1990 - 2011 was flood. The weather event that caused the most crop damage across the U.S from 1990 - 2011 was tornadoes. It can be concluded that flood and tornadoes are the weather events with the most severe economic consequences.
